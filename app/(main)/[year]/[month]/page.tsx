@@ -57,7 +57,7 @@ export default function MonthPage({ params }: PageProps) {
 
         {/* Section 3 — Income table */}
         <IncomeTable
-          key={refreshKey}
+          key={`income-${refreshKey}`}
           year={year}
           month={month}
           onAddIncome={() => openModal("income")}
@@ -65,7 +65,12 @@ export default function MonthPage({ params }: PageProps) {
 
 
         {/* Section 4 — Expense table */}
-        <ExpenseTable onAddExpense={() => openModal("expense")} />
+        <ExpenseTable
+          key={`expense-${refreshKey}`}
+          year={year}
+          month={month}
+          onAddExpense={() => openModal("expense")}
+        />
 
         {/* Section 5 & 6 — Fund allocation + chart (side by side on wide screens) */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">

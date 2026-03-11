@@ -1,17 +1,90 @@
 "use client"
 
-import React from "react"
-import { FUNDS, formatUah } from "@/lib/budget-data"
+import React, { useState, useEffect } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { cn } from "@/lib/utils"
 import { Plus } from "lucide-react"
 
 interface ExpenseTableProps {
+  year: string
+  month: string
   onAddExpense?: () => void
 }
 
-export function ExpenseTable({ onAddExpense }: ExpenseTableProps) {
-  const totalPlan = FUNDS.reduce((s, f) => s + f.rows.reduce((rs, r) => rs + r.planUah, 0), 0)
-  const totalFact = 0
+type Category = { id: string; name: string }
+type Fund = { id: string; name: string; is_mandatory: boolean; sort_order: number }
+type ExpenseRow = {
+  id: string
+  fund: { id: string; name: string } | null
+  category: { id: string; name: string } | null
+  type: "plan" | "fact"
+  amount: number
+  currency: string
+  date: string | null
+}
+
+function formatUah(n: number) {
+  return n.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₴"
+}
+
+export function ExpenseTable({ year, month, onAddExpense }: ExpenseTableProps) {
+  const [funds, setFunds] = useState<Fund[]>([])
+  const [categories, setCategories] = useState<(Category & { fund_id: string })[]>([])
+  const [rows, setRows] = useState<ExpenseRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const supabase = createClient()
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+
+      const monthNames: Record<string, number> = {
+        january: 1, february: 2, march: 3, april: 4,
+        may: 5, june: 6, july: 7, august: 8,
+        september: 9, october: 10, november: 11, december: 12,
+      }
+      const monthNum = monthNames[month.toLowerCase()]
+
+      // Загружаем фонды и категории параллельно
+      const [fundsRes, categoriesRes] = await Promise.all([
+        supabase.from("funds").select("id, name, is_mandatory, sort_order").order("sort_order"),
+        supabase.from("categories").select("id, name, fund_id").order("sort_order"),
+      ])
+
+      if (fundsRes.data) setFunds(fundsRes.data)
+      if (categoriesRes.data) setCategories(categoriesRes.data)
+
+      // Ищем месяц
+      const { data: monthData } = await supabase
+        .from("months")
+        .select("id")
+        .eq("year", Number(year))
+        .eq("month", monthNum)
+        .single()
+
+      if (!monthData) { setLoading(false); return }
+
+      // Загружаем расходы за месяц
+      const { data: expensesData } = await supabase
+        .from("expenses")
+        .select("id, type, amount, currency, date, fund:funds(id, name), category:categories(id, name)")
+        .eq("month_id", monthData.id)
+        .order("date")
+
+      if (expensesData) setRows(expensesData as unknown as ExpenseRow[])
+      setLoading(false)
+    }
+
+    load()
+  }, [year, month])
+
+  // Считаем итоги
+  const totalPlanUah = rows
+    .filter(r => r.type === "plan" && r.currency === "UAH")
+    .reduce((s, r) => s + r.amount, 0)
+  const totalFactUah = rows
+    .filter(r => r.type === "fact" && r.currency === "UAH")
+    .reduce((s, r) => s + r.amount, 0)
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -20,10 +93,10 @@ export function ExpenseTable({ onAddExpense }: ExpenseTableProps) {
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-foreground">Расход</h2>
           <span className="text-xs text-muted-foreground">
-            план: <span className="font-medium tabular-nums text-foreground">{formatUah(totalPlan)}</span>
+            план: <span className="font-medium tabular-nums text-foreground">{formatUah(totalPlanUah)}</span>
           </span>
           <span className="text-xs text-muted-foreground">
-            факт: <span className="font-medium tabular-nums text-foreground">{formatUah(totalFact)}</span>
+            факт: <span className="font-medium tabular-nums text-foreground">{formatUah(totalFactUah)}</span>
           </span>
         </div>
         <button
@@ -67,82 +140,138 @@ export function ExpenseTable({ onAddExpense }: ExpenseTableProps) {
             </tr>
           </thead>
           <tbody>
-            {FUNDS.map((fund) => {
-              if (fund.rows.length === 0) return null
-              const fundPlanTotal = fund.rows.reduce((s, r) => s + r.planUah, 0)
+            {loading ? (
+              <tr>
+                <td colSpan={9} className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  Загрузка...
+                </td>
+              </tr>
+            ) : (
+              funds.map((fund) => {
+                // Категории этого фонда
+                const fundCategories = categories.filter(c => c.fund_id === fund.id)
+                if (fundCategories.length === 0) return null
 
-              return (
-                <React.Fragment key={`fund-${fund.id}`}>
-                  {/* Fund group header */}
-                  <tr className="bg-muted/50 border-t border-border">
-                    <td
-                      colSpan={9}
-                      className={cn(
-                        "px-4 py-2",
-                        fund.mandatory && "border-l-2 border-l-warning"
-                      )}
-                    >
-                      <div className="flex items-center gap-2">
-                        <span className="text-xs font-semibold text-foreground uppercase tracking-wide">
-                          {fund.name}
-                        </span>
-                        {fund.mandatory && (
-                          <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-warning/15 text-warning-foreground border border-warning/30">
-                            обязательный
+                // Расходы плана/факта по фонду
+                const fundPlanRows = rows.filter(r => r.fund?.id === fund.id && r.type === "plan")
+                const fundFactRows = rows.filter(r => r.fund?.id === fund.id && r.type === "fact")
+
+                const fundPlanUah = fundPlanRows
+                  .filter(r => r.currency === "UAH")
+                  .reduce((s, r) => s + r.amount, 0)
+                const fundFactUah = fundFactRows
+                  .filter(r => r.currency === "UAH")
+                  .reduce((s, r) => s + r.amount, 0)
+
+                // Наполненность фонда в %
+                const fundFillPct = fundPlanUah > 0
+                  ? Math.round((fundFactUah / fundPlanUah) * 100)
+                  : 0
+
+                return (
+                  <React.Fragment key={fund.id}>
+                    {/* Fund group header */}
+                    <tr className="bg-muted/50 border-t border-border">
+                      <td
+                        colSpan={9}
+                        className={cn("px-4 py-2", fund.is_mandatory && "border-l-2 border-l-amber-500")}
+                      >
+                        <div className="flex items-center gap-2">
+                          <span className="text-xs font-semibold text-foreground uppercase tracking-wide">
+                            {fund.name}
                           </span>
-                        )}
-                        <span className="ml-auto text-xs font-semibold tabular-nums text-muted-foreground">
-                          {formatUah(fundPlanTotal)}
-                        </span>
-                      </div>
-                    </td>
-                  </tr>
-                  {/* Fund rows */}
-                  {fund.rows.map((row, i) => (
-                    <tr
-                      key={row.id}
-                      className={cn(
-                        "border-b border-border/40 last:border-b-0",
-                        fund.mandatory && "border-l-2 border-l-warning/30",
-                        i % 2 === 0 ? "" : "bg-muted/15"
-                      )}
-                    >
-                      <td className="px-4 py-1.5 text-[13px] text-foreground whitespace-nowrap pl-6">{row.name}</td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-muted-foreground text-[13px] border-l border-border/40 whitespace-nowrap">
-                        {row.planDate ?? "—"}
-                      </td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-foreground whitespace-nowrap">
-                        {row.planAmount ? `${row.planAmount} ${row.planCurrency}` : "—"}
-                      </td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] font-medium text-foreground whitespace-nowrap">
-                        {row.planUah > 0 ? formatUah(row.planUah) : "—"}
-                      </td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground border-l border-border/40 whitespace-nowrap">
-                        {row.fundFill}%
-                      </td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground border-l border-border/40 whitespace-nowrap">—</td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground whitespace-nowrap">—</td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground whitespace-nowrap">0 ₴</td>
-                      <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-foreground border-l border-border/40 whitespace-nowrap">
-                        {row.remaining > 0 ? formatUah(row.remaining) : "—"}
+                          {fund.is_mandatory && (
+                            <span className="inline-flex items-center px-1.5 py-0.5 rounded text-[10px] font-medium bg-amber-500/10 text-amber-500 border border-amber-500/30">
+                              обязательный
+                            </span>
+                          )}
+                          <span className="ml-auto text-xs font-semibold tabular-nums text-muted-foreground">
+                            {fundPlanUah > 0 ? formatUah(fundPlanUah) : "—"}
+                          </span>
+                        </div>
                       </td>
                     </tr>
-                  ))}
-                </React.Fragment>
-              )
-            })}
+
+                    {/* Category rows */}
+                    {fundCategories.map((cat, i) => {
+                      const planRow = fundPlanRows.find(r => r.category?.id === cat.id)
+                      const factRows = fundFactRows.filter(r => r.category?.id === cat.id)
+                      const factUah = factRows
+                        .filter(r => r.currency === "UAH")
+                        .reduce((s, r) => s + r.amount, 0)
+                      const planUah = planRow?.currency === "UAH" ? planRow.amount : 0
+                      const remaining = planUah - factUah
+                      const fillPct = planUah > 0 ? Math.round((factUah / planUah) * 100) : 0
+
+                      return (
+                        <tr
+                          key={cat.id}
+                          className={cn(
+                            "border-b border-border/40 last:border-b-0",
+                            fund.is_mandatory && "border-l-2 border-l-amber-500/30",
+                            i % 2 !== 0 && "bg-muted/15"
+                          )}
+                        >
+                          <td className="px-4 py-1.5 text-[13px] text-foreground whitespace-nowrap pl-6">
+                            {cat.name}
+                          </td>
+                          {/* План */}
+                          <td className="text-right px-3 py-1.5 tabular-nums text-muted-foreground text-[13px] border-l border-border/40 whitespace-nowrap">
+                            {planRow?.date ?? "—"}
+                          </td>
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-foreground whitespace-nowrap">
+                            {planRow ? `${planRow.amount} ${planRow.currency}` : "—"}
+                          </td>
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] font-medium text-foreground whitespace-nowrap">
+                            {planUah > 0 ? formatUah(planUah) : "—"}
+                          </td>
+                          {/* Наполнение */}
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] border-l border-border/40 whitespace-nowrap">
+                            <span className={cn(
+                              "font-medium",
+                              fillPct >= 80 ? "text-emerald-500" :
+                              fillPct >= 40 ? "text-amber-500" : "text-red-500"
+                            )}>
+                              {fillPct}%
+                            </span>
+                          </td>
+                          {/* Факт */}
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground border-l border-border/40 whitespace-nowrap">
+                            {factRows[0]?.date ?? "—"}
+                          </td>
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground whitespace-nowrap">
+                            {factRows.length > 0 ? `${factRows.reduce((s, r) => s + r.amount, 0)} ${factRows[0].currency}` : "—"}
+                          </td>
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] text-muted-foreground whitespace-nowrap">
+                            {factUah > 0 ? formatUah(factUah) : "0 ₴"}
+                          </td>
+                          {/* Остаток */}
+                          <td className="text-right px-3 py-1.5 tabular-nums text-[13px] border-l border-border/40 whitespace-nowrap">
+                            <span className={remaining < 0 ? "text-red-500" : "text-foreground"}>
+                              {planUah > 0 ? formatUah(remaining) : "—"}
+                            </span>
+                          </td>
+                        </tr>
+                      )
+                    })}
+                  </React.Fragment>
+                )
+              })
+            )}
           </tbody>
           <tfoot>
             <tr className="border-t-2 border-border bg-muted/30 font-semibold">
               <td className="px-4 py-2 text-xs text-muted-foreground uppercase tracking-wide">Итого</td>
               <td className="border-l border-border/40" />
               <td />
-              <td className="text-right px-3 py-2 tabular-nums text-foreground">{formatUah(totalPlan)}</td>
+              <td className="text-right px-3 py-2 tabular-nums text-foreground">{formatUah(totalPlanUah)}</td>
               <td className="border-l border-border/40" />
               <td className="border-l border-border/40" />
               <td />
-              <td className="text-right px-3 py-2 tabular-nums text-muted-foreground">0 ₴</td>
-              <td className="text-right px-3 py-2 tabular-nums text-foreground border-l border-border/40">{formatUah(totalPlan)}</td>
+              <td className="text-right px-3 py-2 tabular-nums text-muted-foreground">{formatUah(totalFactUah)}</td>
+              <td className="text-right px-3 py-2 tabular-nums text-foreground border-l border-border/40">
+                {formatUah(totalPlanUah - totalFactUah)}
+              </td>
             </tr>
           </tfoot>
         </table>
