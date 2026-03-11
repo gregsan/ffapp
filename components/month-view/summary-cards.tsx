@@ -19,7 +19,7 @@ type Summary = {
   expenseFact: number
 }
 
-export function SummaryCards() {
+export function SummaryCards({ monthId }: { monthId: string }) {
   const supabase = createClient()
   const [summary, setSummary] = useState<Summary>({
     incomePlan: 0,

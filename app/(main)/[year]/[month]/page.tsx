@@ -1,8 +1,9 @@
 "use client"
 
-import { useState } from "react"
+import { useEffect, useState } from "react"
 import { use } from "react"
-import { MONTH_LABELS, FUNDS, formatUah } from "@/lib/budget-data"
+import { createClient } from "@/lib/supabase/client"
+import { MONTH_LABELS } from "@/lib/budget-data"
 import { SummaryCards } from "@/components/month-view/summary-cards"
 import { CurrencyRates } from "@/components/month-view/currency-rates"
 import { IncomeTable } from "@/components/month-view/income-table"
@@ -20,28 +21,46 @@ interface PageProps {
 export default function MonthPage({ params }: PageProps) {
   const { year, month } = use(params)
   const monthLabel = MONTH_LABELS[month] ?? month
+
   const [modalOpen, setModalOpen] = useState(false)
   const [modalType, setModalType] = useState<"income" | "expense" | undefined>(undefined)
+  const [refreshKey, setRefreshKey] = useState(0)
+  const [monthId, setMonthId] = useState<string | null>(null)
+
+  const MONTH_NUMBERS: Record<string, number> = {
+    january: 1, february: 2, march: 3, april: 4,
+    may: 5, june: 6, july: 7, august: 8,
+    september: 9, october: 10, november: 11, december: 12,
+  }
+
+  useEffect(() => {
+    const supabase = createClient()
+    async function fetchMonthId() {
+      const { data } = await supabase
+        .from("months")
+        .select("id")
+        .eq("year", Number(year))
+        .eq("month", MONTH_NUMBERS[month.toLowerCase()])
+        .single()
+      if (data) setMonthId(data.id)
+    }
+    fetchMonthId()
+  }, [year, month])
 
   function openModal(type?: "income" | "expense") {
     setModalType(type)
     setModalOpen(true)
   }
 
-  const [refreshKey, setRefreshKey] = useState(0)
-
   function handleModalClose() {
     setModalOpen(false)
-    setRefreshKey(k => k + 1) // триггерим перезагрузку
+    setRefreshKey(k => k + 1)
   }
-  
-
 
   return (
     <>
       {/* Desktop & tablet layout */}
       <div className="px-6 py-5 space-y-5 hidden md:block">
-        {/* Page heading */}
         <div>
           <h1 className="text-lg font-semibold text-foreground">
             {monthLabel} {year}
@@ -49,13 +68,9 @@ export default function MonthPage({ params }: PageProps) {
           <p className="text-xs text-muted-foreground mt-0.5">Семейный бюджет</p>
         </div>
 
-        {/* Section 1 — Summary */}
-        <SummaryCards />
+        {monthId && <SummaryCards monthId={monthId} />}
+        {monthId && <CurrencyRates monthId={monthId} />}
 
-        {/* Section 2 — Currency rates */}
-        <CurrencyRates />
-
-        {/* Section 3 — Income table */}
         <IncomeTable
           key={`income-${refreshKey}`}
           year={year}
@@ -63,8 +78,6 @@ export default function MonthPage({ params }: PageProps) {
           onAddIncome={() => openModal("income")}
         />
 
-
-        {/* Section 4 — Expense table */}
         <ExpenseTable
           key={`expense-${refreshKey}`}
           year={year}
@@ -72,7 +85,6 @@ export default function MonthPage({ params }: PageProps) {
           onAddExpense={() => openModal("expense")}
         />
 
-        {/* Section 5 & 6 — Fund allocation + chart (side by side on wide screens) */}
         <div className="grid grid-cols-1 xl:grid-cols-3 gap-5">
           <div className="xl:col-span-2">
             <FundAllocation />
@@ -97,13 +109,11 @@ export default function MonthPage({ params }: PageProps) {
         <Plus className="w-6 h-6" />
       </button>
 
-      {/* Modal */}
       <AddTransactionModal
         open={modalOpen}
         onClose={handleModalClose}
         defaultType={modalType}
       />
-
     </>
   )
 }

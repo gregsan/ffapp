@@ -1,16 +1,56 @@
 "use client"
 
-import { useState } from "react"
-import { CURRENCY_RATES } from "@/lib/budget-data"
+import { useState, useEffect } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { Pencil, Check } from "lucide-react"
 
-export function CurrencyRates() {
+type Rates = { eurHuf: number; eurUah: number; usdUah: number }
+
+export function CurrencyRates({ monthId }: { monthId: string }) {
   const [editing, setEditing] = useState(false)
-  const [rates, setRates] = useState(CURRENCY_RATES)
+  const [rates, setRates] = useState<Rates>({ eurHuf: 0, eurUah: 0, usdUah: 0 })
+
+  useEffect(() => {
+    const supabase = createClient()
+
+    async function fetchRates() {
+      const { data } = await supabase
+        .from("exchange_rates")
+        .select("currency, rate_to_eur")
+        .eq("month_id", monthId)
+
+      if (data) {
+        const map: Record<string, number> = {}
+        data.forEach((r) => { map[r.currency] = r.rate_to_eur })
+        setRates({
+          eurHuf: map["HUF"] ?? 0,
+          eurUah: map["UAH"] ?? 0,
+          usdUah: map["UAH"] && map["USD"] ? map["UAH"] / map["USD"] : 0,
+        })
+      }
+    }
+
+    fetchRates()
+  }, [monthId])
+
+  async function saveRates() {
+    const supabase = createClient()
+    await supabase.from("exchange_rates").upsert(
+      [
+        { month_id: monthId, currency: "HUF", rate_to_eur: rates.eurHuf },
+        { month_id: monthId, currency: "UAH", rate_to_eur: rates.eurUah },
+        { month_id: monthId, currency: "USD", rate_to_eur: rates.eurUah / rates.usdUah },
+      ],
+      { onConflict: "month_id,currency" }
+    )
+    setEditing(false)
+  }
 
   return (
     <div className="flex flex-wrap items-center gap-x-6 gap-y-2 rounded-lg border border-border bg-card px-4 py-3">
-      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">Курсы валют</p>
+      <p className="text-xs font-semibold text-muted-foreground uppercase tracking-wide shrink-0">
+        Курсы валют
+      </p>
 
       {editing ? (
         <>
@@ -18,7 +58,7 @@ export function CurrencyRates() {
           <RateInput label="1 EUR =" suffix="UAH" value={rates.eurUah} onChange={(v) => setRates((r) => ({ ...r, eurUah: v }))} />
           <RateInput label="1 USD =" suffix="UAH" value={rates.usdUah} onChange={(v) => setRates((r) => ({ ...r, usdUah: v }))} />
           <button
-            onClick={() => setEditing(false)}
+            onClick={saveRates}
             className="flex items-center gap-1.5 text-xs font-medium text-primary hover:underline"
           >
             <Check className="w-3.5 h-3.5" />
