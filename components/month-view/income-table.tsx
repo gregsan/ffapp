@@ -14,7 +14,7 @@ interface IncomeTableProps {
 type IncomeSource = { id: string; name: string }
 type IncomeRow = {
   id: string
-  source: IncomeSource[] | null
+  source: IncomeSource | null
   type: "plan" | "fact"
   amount: number
   currency: string
@@ -77,10 +77,10 @@ export function IncomeTable({ year, month, onAddIncome }: IncomeTableProps) {
 
   // Группируем по источнику: план и факт отдельно
   const planBySource = Object.fromEntries(
-    sources.map(s => [s.id, rows.find(r => r.source?.[0]?.id === s.id && r.type === "plan")])
+    sources.map(s => [s.id, rows.find(r => r.source?.id === s.id && r.type === "plan")])
   )
   const factBySource = Object.fromEntries(
-    sources.map(s => [s.id, rows.filter(r => r.source?.[0]?.id === s.id && r.type === "fact")])
+    sources.map(s => [s.id, rows.filter(r => r.source?.id === s.id && r.type === "fact")])
   )
 
   const totalPlanUah = rows
