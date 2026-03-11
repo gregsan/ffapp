@@ -1,15 +1,95 @@
 "use client"
 
-import { INCOME_ROWS, formatUah } from "@/lib/budget-data"
+import { useState, useEffect } from "react"
+import { createClient } from "@/lib/supabase/client"
 import { Plus } from "lucide-react"
 
 interface IncomeTableProps {
+  year: string
+  month: string
   onAddIncome?: () => void
 }
 
-export function IncomeTable({ onAddIncome }: IncomeTableProps) {
-  const totalPlan = INCOME_ROWS.reduce((s, r) => s + r.planUah, 0)
-  const totalFact = INCOME_ROWS.reduce((s, r) => s + r.factUah, 0)
+// Типы данных из Supabase
+type IncomeSource = { id: string; name: string }
+type IncomeRow = {
+  id: string
+  source: IncomeSource[] | null
+  type: "plan" | "fact"
+  amount: number
+  currency: string
+  date: string | null
+}
+
+function formatUah(n: number) {
+  return n.toLocaleString("uk-UA", { minimumFractionDigits: 2, maximumFractionDigits: 2 }) + " ₴"
+}
+
+export function IncomeTable({ year, month, onAddIncome }: IncomeTableProps) {
+  const [sources, setSources] = useState<IncomeSource[]>([])
+  const [rows, setRows] = useState<IncomeRow[]>([])
+  const [loading, setLoading] = useState(true)
+  const supabase = createClient()
+
+  useEffect(() => {
+    async function load() {
+      setLoading(true)
+
+      // Конвертируем "march" → 3
+      const monthNames: Record<string, number> = {
+        january: 1, february: 2, march: 3, april: 4,
+        may: 5, june: 6, july: 7, august: 8,
+        september: 9, october: 10, november: 11, december: 12,
+      }
+      const monthNum = monthNames[month.toLowerCase()]
+
+      // Загружаем источники дохода
+      const { data: sourcesData } = await supabase
+        .from("income_sources")
+        .select("id, name")
+        .order("sort_order")
+
+      if (sourcesData) setSources(sourcesData)
+
+      // Ищем месяц в БД
+      const { data: monthData } = await supabase
+        .from("months")
+        .select("id")
+        .eq("year", Number(year))
+        .eq("month", monthNum)
+        .single()
+
+      if (!monthData) { setLoading(false); return }
+
+      // Загружаем транзакции прихода за этот месяц
+      const { data: incomeData } = await supabase
+        .from("income")
+        .select("id, type, amount, currency, date, source:income_sources(id, name)")
+        .eq("month_id", monthData.id)
+        .order("date")
+
+      if (incomeData) setRows(incomeData as unknown as IncomeRow[])
+      setLoading(false)
+    }
+
+    load()
+  }, [year, month])
+
+  // Группируем по источнику: план и факт отдельно
+  const planBySource = Object.fromEntries(
+    sources.map(s => [s.id, rows.find(r => r.source?.[0].id === s.id && r.type === "plan")])
+  )
+  const factBySource = Object.fromEntries(
+    sources.map(s => [s.id, rows.filter(r => r.source?.[0].id === s.id && r.type === "fact")])
+  )
+
+  const totalPlanUah = rows
+    .filter(r => r.type === "plan" && r.currency === "UAH")
+    .reduce((s, r) => s + r.amount, 0)
+
+  const totalFactUah = rows
+    .filter(r => r.type === "fact" && r.currency === "UAH")
+    .reduce((s, r) => s + r.amount, 0)
 
   return (
     <div className="rounded-lg border border-border bg-card overflow-hidden">
@@ -18,10 +98,10 @@ export function IncomeTable({ onAddIncome }: IncomeTableProps) {
         <div className="flex items-center gap-3">
           <h2 className="text-sm font-semibold text-foreground">Приход</h2>
           <span className="text-xs text-muted-foreground">
-            план: <span className="font-medium tabular-nums text-foreground">{formatUah(totalPlan)}</span>
+            план: <span className="font-medium tabular-nums text-foreground">{formatUah(totalPlanUah)}</span>
           </span>
           <span className="text-xs text-muted-foreground">
-            факт: <span className="font-medium tabular-nums text-foreground">{formatUah(totalFact)}</span>
+            факт: <span className="font-medium tabular-nums text-foreground">{formatUah(totalFactUah)}</span>
           </span>
         </div>
         <button
@@ -58,38 +138,65 @@ export function IncomeTable({ onAddIncome }: IncomeTableProps) {
             </tr>
           </thead>
           <tbody>
-            {INCOME_ROWS.map((row, i) => (
-              <tr
-                key={row.id}
-                className={i % 2 === 1 ? "bg-muted/20" : ""}
-              >
-                <td className="px-4 py-2 font-medium text-foreground whitespace-nowrap">{row.name}</td>
-                <td className="text-right px-3 py-2 tabular-nums text-muted-foreground border-l border-border/40 whitespace-nowrap">
-                  {row.planDate ?? "—"}
+            {loading ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  Загрузка...
                 </td>
-                <td className="text-right px-3 py-2 tabular-nums text-foreground whitespace-nowrap">
-                  {row.planAmount ? `${row.planAmount} ${row.planCurrency}` : "—"}
-                </td>
-                <td className="text-right px-3 py-2 tabular-nums font-medium text-foreground whitespace-nowrap">
-                  {row.planUah > 0 ? formatUah(row.planUah) : "—"}
-                </td>
-                <td className="text-right px-3 py-2 tabular-nums text-muted-foreground border-l border-border/40 whitespace-nowrap">
-                  {row.factDate ?? "—"}
-                </td>
-                <td className="text-right px-3 py-2 tabular-nums text-muted-foreground whitespace-nowrap">—</td>
-                <td className="text-right px-3 py-2 tabular-nums text-muted-foreground whitespace-nowrap">0 ₴</td>
               </tr>
-            ))}
+            ) : sources.length === 0 ? (
+              <tr>
+                <td colSpan={7} className="px-4 py-6 text-center text-sm text-muted-foreground">
+                  Нет данных
+                </td>
+              </tr>
+            ) : (
+              sources.map((source, i) => {
+                const plan = planBySource[source.id]
+                const facts = factBySource[source.id] ?? []
+                const factTotalUah = facts
+                  .filter(f => f.currency === "UAH")
+                  .reduce((s, f) => s + f.amount, 0)
+
+                return (
+                  <tr key={source.id} className={i % 2 === 1 ? "bg-muted/20" : ""}>
+                    <td className="px-4 py-2 font-medium text-foreground whitespace-nowrap">
+                      {source.name}
+                    </td>
+                    {/* План */}
+                    <td className="text-right px-3 py-2 tabular-nums text-muted-foreground border-l border-border/40 whitespace-nowrap">
+                      {plan?.date ?? "—"}
+                    </td>
+                    <td className="text-right px-3 py-2 tabular-nums text-foreground whitespace-nowrap">
+                      {plan ? `${plan.amount} ${plan.currency}` : "—"}
+                    </td>
+                    <td className="text-right px-3 py-2 tabular-nums font-medium text-foreground whitespace-nowrap">
+                      {plan?.currency === "UAH" && plan.amount > 0 ? formatUah(plan.amount) : "—"}
+                    </td>
+                    {/* Факт */}
+                    <td className="text-right px-3 py-2 tabular-nums text-muted-foreground border-l border-border/40 whitespace-nowrap">
+                      {facts[0]?.date ?? "—"}
+                    </td>
+                    <td className="text-right px-3 py-2 tabular-nums text-muted-foreground whitespace-nowrap">
+                      {facts.length > 0 ? `${facts.reduce((s, f) => s + f.amount, 0)} ${facts[0].currency}` : "—"}
+                    </td>
+                    <td className="text-right px-3 py-2 tabular-nums text-muted-foreground whitespace-nowrap">
+                      {factTotalUah > 0 ? formatUah(factTotalUah) : "0 ₴"}
+                    </td>
+                  </tr>
+                )
+              })
+            )}
           </tbody>
           <tfoot>
             <tr className="border-t border-border bg-muted/30 font-semibold">
               <td className="px-4 py-2 text-xs text-muted-foreground uppercase tracking-wide">Итого</td>
               <td className="border-l border-border/40" />
               <td />
-              <td className="text-right px-3 py-2 tabular-nums text-foreground">{formatUah(totalPlan)}</td>
+              <td className="text-right px-3 py-2 tabular-nums text-foreground">{formatUah(totalPlanUah)}</td>
               <td className="border-l border-border/40" />
               <td />
-              <td className="text-right px-3 py-2 tabular-nums text-muted-foreground">0 ₴</td>
+              <td className="text-right px-3 py-2 tabular-nums text-muted-foreground">{formatUah(totalFactUah)}</td>
             </tr>
           </tfoot>
         </table>

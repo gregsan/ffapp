@@ -28,6 +28,15 @@ export default function MonthPage({ params }: PageProps) {
     setModalOpen(true)
   }
 
+  const [refreshKey, setRefreshKey] = useState(0)
+
+  function handleModalClose() {
+    setModalOpen(false)
+    setRefreshKey(k => k + 1) // триггерим перезагрузку
+  }
+  
+
+
   return (
     <>
       {/* Desktop & tablet layout */}
@@ -47,7 +56,13 @@ export default function MonthPage({ params }: PageProps) {
         <CurrencyRates />
 
         {/* Section 3 — Income table */}
-        <IncomeTable onAddIncome={() => openModal("income")} />
+        <IncomeTable
+          key={refreshKey}
+          year={year}
+          month={month}
+          onAddIncome={() => openModal("income")}
+        />
+
 
         {/* Section 4 — Expense table */}
         <ExpenseTable onAddExpense={() => openModal("expense")} />
@@ -80,9 +95,10 @@ export default function MonthPage({ params }: PageProps) {
       {/* Modal */}
       <AddTransactionModal
         open={modalOpen}
-        onClose={() => setModalOpen(false)}
+        onClose={handleModalClose}
         defaultType={modalType}
       />
+
     </>
   )
 }
