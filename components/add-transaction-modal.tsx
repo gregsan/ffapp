@@ -88,7 +88,6 @@ export function AddTransactionModal({ open, onClose, defaultType }: AddTransacti
   // Получаем или создаём запись месяца в БД
   async function getOrCreateMonth() {
     const year = Number(params.year)
-    // Преобразуем "march" → 3
     const monthNames: Record<string, number> = {
       january: 1, february: 2, march: 3, april: 4,
       may: 5, june: 6, july: 7, august: 8,
@@ -106,15 +105,24 @@ export function AddTransactionModal({ open, onClose, defaultType }: AddTransacti
 
     if (existing) return existing.id
 
-    // Создаём если нет
+    // Получаем family_id текущего пользователя
+    const { data: memberData } = await supabase
+      .from("family_members")
+      .select("family_id")
+      .single()
+
+    if (!memberData) return null
+
+    // Создаём месяц с family_id
     const { data: created } = await supabase
       .from("months")
-      .insert({ year, month })
+      .insert({ year, month, family_id: memberData.family_id })
       .select("id")
       .single()
 
     return created?.id
   }
+
 
   async function handleSave() {
     setSaving(true)
